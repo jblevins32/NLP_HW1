@@ -599,9 +599,9 @@ def get_dan_model(vocab_size, embedding_dim, hidden_dim):
 def get_hyperparams_dan():
   ### your hyper parameters
     learning_rate = 0.001
-    epochs = 100
-    hidden_layer_dimensions = 64
-    embedding_dim = 64
+    epochs = 150
+    hidden_layer_dimensions = 100
+    embedding_dim = 100
     ###
     return learning_rate, epochs, hidden_layer_dimensions, embedding_dim
 
@@ -634,7 +634,6 @@ class SimpleAttentionNBOW(nn.Module):
         hidden = (embeddings * attn.unsqueeze(-1)).sum(dim=1)  # Apply attention weights
         predictions = self.linear(hidden)  # Pass through linear layer
 
-        print(predictions.shape)
         ## YOUR CODE ENDS HERE ##
 
         return predictions
@@ -699,17 +698,18 @@ class SimpleAttentionNBOW(nn.Module):
 # Experiment with different values for these hyperparaters to optimize your model's performance
 def get_hyperparams_simple_attention():
   ### your hyper parameters
-    learning_rate = None
-    epochs = None
-    embedding_dim = None
+    learning_rate = 0.001
+    epochs = 100
+    embedding_dim = 64
     return learning_rate, epochs, embedding_dim
 
 def get_simple_attention_model(vocab_size, embedding_dim):
     """
     This function returns an instance of the SimpleAttentionNBOW model. Initialize the SimpleAttentionNBOW model here and return it.
     """
-    model = None
     ## YOUR CODE STARTS HERE ##
+
+    model = SimpleAttentionNBOW(vocab_size=vocab_size, embedding_dim=embedding_dim)
 
     ## YOUR CODE ENDS HERE ##
     return model
