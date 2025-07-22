@@ -286,7 +286,8 @@ class NBOW(nn.Module):
 
         # batch size x vocab size x embedding_dim x num_classes
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
-        self.linear = nn.Linear(embedding_dim, num_classes)
+        self.linear = nn.Linear(embedding_dim, num_classes, bias=False)
+        self.softmax = nn.Softmax(dim=-1)
 
         ## YOUR CODE ENDS HERE ##
 
@@ -338,7 +339,6 @@ class NBOW(nn.Module):
         '''
         ### YOUR CODE STARTS HERE ###
         embeddings = self.get_embeddings(x)
-
         mask = (x!= PADDING_VALUE)
 
         # Count the number of non-padding tokens in each sequence for averaging later
@@ -347,8 +347,9 @@ class NBOW(nn.Module):
         # Apply the mask to the embeddings
         embeddings = embeddings * mask.unsqueeze(-1)
 
-        return embeddings.sum(dim=1)/num_non_pads # gives batch_size x 1
+        avg =  embeddings.sum(dim=1)/num_non_pads # gives batch_size x 1
 
+        return avg
         ### YOUR CODE ENDS HERE ###
 
 # DO NOT CHANGE THIS CELL
@@ -501,9 +502,9 @@ class DAN(nn.Module):
         self.num_classes = num_classes
 
         self.embedding = nn.Embedding(vocab_size, embedding_dim) # 2 x 5
-        self.hidden = nn.Linear(embedding_dim, hidden_dim) # 1 x 3
+        self.hidden = nn.Linear(embedding_dim, hidden_dim, bias=False) # 1 x 3
         self.relu = nn.ReLU()
-        self.linear = nn.Linear(hidden_dim, num_classes)
+        self.linear = nn.Linear(hidden_dim, num_classes, bias=True)
 
         ## YOUR CODE ENDS HERE ##
 
@@ -520,7 +521,8 @@ class DAN(nn.Module):
         ## YOUR CODE STARTS HERE ##
         hidden = self.get_hidden(x)
         relu_out = self.relu(hidden)
-        return self.linear(relu_out)
+        lin_out = self.linear(relu_out)
+        return lin_out
 
         ## YOUR CODE ENDS HERE ##
 
@@ -622,7 +624,7 @@ class SimpleAttentionNBOW(nn.Module):
 
         self.embedding = nn.Embedding(vocab_size, embedding_dim)  # Embedding layer
         self.attention = nn.Parameter(torch.randn(embedding_dim), requires_grad=True)  # Attention layer
-        self.linear = nn.Linear(embedding_dim, num_classes)  # Linear layer for classification
+        self.linear = nn.Linear(embedding_dim, num_classes, bias=False)  # Linear layer for classification
 
         ## YOUR CODE ENDS HERE ##
 
@@ -719,11 +721,27 @@ class MultiHeadAttentionNBOW(nn.Module):
     def __init__(self, vocab_size, embedding_dim, num_heads, num_classes=20):
         ## YOUR CODE STARTS HERE ##
         super(MultiHeadAttentionNBOW, self).__init__()
-        pass # remove this when you add your implementation
+
+        self.vocab_size = vocab_size
+        self.embedding_dim = embedding_dim
+        self.num_heads = num_heads
+        self.num_classes = num_classes
+
+        self.embedding = nn.Embedding(vocab_size, embedding_dim)  # Embedding layer
+        self.attention = nn.Parameter(torch.randn(num_heads, embedding_dim), requires_grad=True)
+        self.linear = nn.Linear(embedding_dim*num_heads, num_classes, bias=False)  # Linear layer for classification
+
         ## YOUR CODE ENDS HERE ##
     def forward(self, x):
         ## YOUR CODE STARTS HERE ##
-        pass # remove this when you add your implementation
+
+        attn_matrix = self.get_attention_matrix(x)
+        embeddings = self.get_embeddings(x)
+        hidden = (embeddings.unsqueeze(-2) * attn_matrix.unsqueeze(-1)).sum(dim=1)  # Apply attention weights and sum over vocab
+        hidden_concat = hidden.reshape(hidden.size(0), -1)  # Reshape to (BATCH_SIZE, num_heads * embedding_dim)
+        predictions = self.linear(hidden_concat)
+
+        return predictions
         ## YOUR CODE ENDS HERE ##
 
 
@@ -732,7 +750,9 @@ class MultiHeadAttentionNBOW(nn.Module):
         This function returns the embeddings of the input x
         '''
         ### YOUR CODE STARTS HERE ###
-        pass # remove this when you add your implementation
+
+        return self.embedding(x)
+
         ### YOUR CODE ENDS HERE ###
 
     def set_embedding_weight(self, weight):
@@ -742,7 +762,9 @@ class MultiHeadAttentionNBOW(nn.Module):
             weight: torch.tensor of shape (vocab_size, embedding_dim)
         '''
         ### YOUR CODE STARTS HERE ###
-        pass # remove this when you add your implementation
+
+        self.embedding.weight = nn.Parameter(weight, requires_grad=False)
+
         ### YOUR CODE ENDS HERE ###
 
     def set_attention_weights(self, weight):
@@ -752,7 +774,9 @@ class MultiHeadAttentionNBOW(nn.Module):
             weight: torch.tensor of shape (num_heads, embedding_dim)
         '''
         ### YOUR CODE STARTS HERE ###
-        pass # remove this when you add your implementation
+
+        self.attention = nn.Parameter(weight, requires_grad=False)
+
         ### YOUR CODE ENDS HERE ###
 
     def get_attention_matrix(self, x):
@@ -763,26 +787,37 @@ class MultiHeadAttentionNBOW(nn.Module):
         Returns:
             attention_weights: torch.tensor of shape (BATCH_SIZE, max seq length in batch, num_heads))
         '''
+
         ### YOUR CODE STARTS HERE ###
-        pass # remove this when you add your implementation
+        embeddings = self.get_embeddings(x).unsqueeze(-2) # BATCH_SIZE x max_seq_len x 1 x embedding_dim
+        attn = self.attention.unsqueeze(0).unsqueeze(0)  # 1 x 1 x num_heads x embedding_dim
+        cos_sim = torch.cosine_similarity(embeddings, attn, dim=-1)
+
+        # Mask to ignore padding tokens
+        mask = (x != 0)
+        for i in range(self.num_heads):
+            cos_sim[:, :, i] = cos_sim[:, :, i].masked_fill(~mask, float('-inf'))
+
+        return torch.softmax(cos_sim, dim=-2)
+
         ### YOUR CODE ENDS HERE ###
 
 # Assign hyperparameters and training parameters
 # Experiment with different values for these hyperparaters to optimize your model's performance
 def get_hyperparams_multihead():
-    learning_rate = None
-    epochs = None
-    num_heads = None
-    embedding_dim = None
+    learning_rate = 0.001
+    epochs = 100
+    num_heads = 6
+    embedding_dim = 64
     return learning_rate, epochs, num_heads, embedding_dim
 
 def get_multihead_attention_model(vocab_size, embedding_dim, num_heads):
     """
     This function returns an instance of the MultiHeadAttentionNBOW model. Initialize the MultiHeadAttentionNBOW model here and return it.
     """
-    model = None
-    ## YOUR CODE STARTS HERE ##
 
+    ## YOUR CODE STARTS HERE ##
+    model = MultiHeadAttentionNBOW(vocab_size=vocab_size, embedding_dim=embedding_dim, num_heads=num_heads)
     ## YOUR CODE ENDS HERE ##
     return model
 
