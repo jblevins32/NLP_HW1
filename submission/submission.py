@@ -459,8 +459,8 @@ def val_loop(model, criterion, iterator):
 def get_hyperparams_nbow():
   ### your hyper parameters
   learning_rate = 0.001
-  epochs = 100
-  embedding_dim = 64
+  epochs = 150
+  embedding_dim = 100
   ###
   return learning_rate, epochs, embedding_dim
 
@@ -728,7 +728,8 @@ class MultiHeadAttentionNBOW(nn.Module):
         self.num_classes = num_classes
 
         self.embedding = nn.Embedding(vocab_size, embedding_dim)  # Embedding layer
-        self.attention = nn.Parameter(torch.randn(num_heads, embedding_dim), requires_grad=True)
+        # self.attention = nn.Parameter(torch.randn(num_heads, embedding_dim), requires_grad=True)
+        self.attention = nn.Embedding(num_heads, embedding_dim)
         self.linear = nn.Linear(embedding_dim*num_heads, num_classes, bias=False)  # Linear layer for classification
 
         ## YOUR CODE ENDS HERE ##
@@ -775,7 +776,7 @@ class MultiHeadAttentionNBOW(nn.Module):
         '''
         ### YOUR CODE STARTS HERE ###
 
-        self.attention = nn.Parameter(weight, requires_grad=False)
+        self.attention.weight.data.copy_(weight)
 
         ### YOUR CODE ENDS HERE ###
 
@@ -790,7 +791,12 @@ class MultiHeadAttentionNBOW(nn.Module):
 
         ### YOUR CODE STARTS HERE ###
         embeddings = self.get_embeddings(x).unsqueeze(-2) # BATCH_SIZE x max_seq_len x 1 x embedding_dim
-        attn = self.attention.unsqueeze(0).unsqueeze(0)  # 1 x 1 x num_heads x embedding_dim
+
+        head_ids = torch.arange(self.num_heads, device=x.device)  # shape: [num_heads]
+        attn = self.attention(head_ids)  # shape: [num_heads, embedding_dim]
+        attn = attn.unsqueeze(0).unsqueeze(0)  # shape: [1, 1, num_heads, embedding_dim]
+
+        # attn = self.attention.unsqueeze(0).unsqueeze(0)  # 1 x 1 x num_heads x embedding_dim
         cos_sim = torch.cosine_similarity(embeddings, attn, dim=-1)
 
         # Mask to ignore padding tokens
@@ -807,7 +813,7 @@ class MultiHeadAttentionNBOW(nn.Module):
 def get_hyperparams_multihead():
     learning_rate = 0.001
     epochs = 100
-    num_heads = 6
+    num_heads = 4
     embedding_dim = 64
     return learning_rate, epochs, num_heads, embedding_dim
 
@@ -826,20 +832,35 @@ class SelfAttentionNBOW(nn.Module):
     def __init__(self, vocab_size, embedding_dim, num_classes=20):
         super(SelfAttentionNBOW, self).__init__()
         # YOUR CODE STARTS HERE
-        pass # remove this when you add your implementation
+
+        self.vocab_size = vocab_size
+        self.embedding_dim = embedding_dim
+        self.num_classes = num_classes
+
+        self.embedding = nn.Embedding(vocab_size, embedding_dim)
+        self.linear = nn.Linear(embedding_dim, num_classes, bias=False)  # Linear layer for classification
+
         # YOUR CODE ENDS HERE
 
     def forward(self, x):
         # YOUR CODE STARTS HERE
-        pass # remove this when you add your implementation
+
+        embeddings = self.get_embeddings(x)  # Get embeddings
+        attention_matrix = self.get_attention_matrix(x)  # Get attention matrix
+        h_self = (embeddings * attention_matrix.unsqueeze(-1)).sum(dim=1)
+        h_avg = embeddings.mean(dim=1)  # Average over the sequence length
+        predictions = self.linear(h_self+h_avg)
+        return predictions
+
         # YOUR CODE ENDS HERE
     def get_embeddings(self, x):
         '''
         This function returns the embeddings of the input x
         '''
         ### YOUR CODE STARTS HERE ###
-        pass # remove this when you add your implementation
+        return self.embedding(x)
         ### YOUR CODE ENDS HERE ###
+
     def set_embedding_weight(self, weight):
         '''
         This function sets the embedding weights to the input weight ensure you aren't recording gradients for this
@@ -847,18 +868,29 @@ class SelfAttentionNBOW(nn.Module):
             weight: torch.tensor of shape (vocab_size, embedding_dim)
         '''
         ### YOUR CODE STARTS HERE ###
-        pass # remove this when you add your implementation
+        self.embedding.weight = nn.Parameter(weight, requires_grad=False)
         ### YOUR CODE ENDS HERE ###
+
     def get_attention_matrix(self, x):
         '''
         This function returns the normalized attention matrix for the input x
         Args:
             x: torch.tensor of shape (BATCH_SIZE, max seq length in batch)
         Returns:
-            attention_weights: torch.tensor of shape (BATCH_SIZE, max seq length in batch, max seq length in batch)
+            attention_weights: torch.tensor of shape (BATCH_SIZE, max seq length in batch)
         '''
         ### YOUR CODE STARTS HERE ###
-        pass # remove this when you add your implementation
+
+        embeddings = self.get_embeddings(x)  # BATCH_SIZE x max_seq_len x embedding_dim
+        embeddings[x==0] = 0  # Set padding tokens to zero
+
+        attn = torch.matmul(embeddings,embeddings.transpose(1, 2))  # BATCH_SIZE x max_seq_len x max_seq_len
+        attn = attn.sum(-1)
+
+        attn[attn == 0] = float('-inf')  # Set padding tokens to -inf
+
+        return torch.softmax(attn, dim=-1)
+
         ### YOUR CODE ENDS HERE ###
 
 
@@ -866,8 +898,9 @@ def get_self_attention_model(vocab_size, embedding_dim):
     """
     This function returns an instance of the Self Attention model. Initialize the Self Attention model here and return it.
     """
-    model = None
     ## YOUR CODE STARTS HERE ##
+
+    model = SelfAttentionNBOW(vocab_size=vocab_size, embedding_dim=embedding_dim)
 
     ## YOUR CODE ENDS HERE ##
     return model
@@ -875,9 +908,9 @@ def get_self_attention_model(vocab_size, embedding_dim):
 # Assign hyperparameters and training parameters
 # Experiment with different values for these hyperparaters to optimize your model's performance
 def get_hyperparams_self_attn():
-    learning_rate = None
-    epochs = None
-    embedding_dim = None
+    learning_rate = 0.001
+    epochs = 75
+    embedding_dim = 325
     return learning_rate, epochs, embedding_dim
 
 
@@ -898,8 +931,14 @@ class PerceptronLoss(nn.Module):
         Returns:
             scalar: The mean perceptron loss for the batch.
         """
-        loss = None
+
         # YOUR CODE STARTS HERE
+
+        pred_probs = torch.softmax(predictions, dim=-1)  # Convert logits to probabilities
+        pred_chosen = torch.max(predictions,axis=-1).values # Choose the max prediction for each sample
+        idx = torch.arange(pred_probs.size(0))
+        error = pred_chosen - predictions[idx,labels] # Find error between the chosen prediction and the true label
+        loss = torch.mean(torch.clamp(error, min=0))  # Calculate the mean perceptron loss
 
         # YOUR CODE ENDS HERE
         return loss
@@ -911,7 +950,7 @@ class HingeLoss(nn.Module):
         cost_matrix is a 2D list. Convert it to a tensor on appropriate device.
         """
         # YOUR CODE STARTS HERE
-
+        self.cost_matrix = torch.tensor(cost_matrix, device=device)
         # YOUR CODE ENDS HERE
 
     def forward(self, predictions, labels):
@@ -927,8 +966,18 @@ class HingeLoss(nn.Module):
         Returns:
             scalar: The mean hinge loss for the batch, adjusted for the defined cost.
         """
-        loss = None
         # YOUR CODE STARTS HERE
+
+        # Get the scores for the true labels with gather
+        true_scores = predictions.gather(1, labels.unsqueeze(1))
+        sample_cost = self.cost_matrix[labels]
+
+        new_scores = predictions + sample_cost
+
+        max_scores = torch.max(new_scores,axis=-1).values # Choose the max prediction for each sample
+
+        error = max_scores.unsqueeze(-1) - true_scores # Find error between the chosen prediction and the true label
+        loss = torch.mean(torch.clamp(error, min=0))  # Calculate the mean perceptron loss
 
         # YOUR CODE ENDS HERE
         return loss
@@ -944,8 +993,10 @@ def get_cost_matrix(num_classes=20):
         list of lists: A 2D list where element (i, j) is the absolute difference between i and j,
                        set to zero if i equals j.
     """
-    cost_matrix = None
+
     # YOUR CODE STARTS HERE
+
+    cost_matrix = [[0 if i == j else abs(i - j) for j in range(num_classes)] for i in range(num_classes)]
 
     # YOUR CODE ENDS HERE
     return cost_matrix
